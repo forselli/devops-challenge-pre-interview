@@ -37,9 +37,8 @@ jobs:
           LOCAL_REGISTRY: ${{ steps.kind.outputs.LOCAL_REGISTRY }}
         run: |
           cd k8s
-          kustomize edit set image devops-challenge-nextjs=$LOCAL_REGISTRY/devops-challenge-nextjs:latest
+          kustomize edit set image devops-challenge-pre-interview-nextjs=$LOCAL_REGISTRY/devops-challenge-nextjs:latest
           kustomize build . | kubectl apply -f -
-          kubectl get deployments -n devops-challenge -o yaml
 
       - name: Wait for PostgreSQL to be ready
         run: |
