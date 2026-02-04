@@ -1,0 +1,87 @@
+name: e2e
+
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [ '*' ]
+  #   tags-ignore: [ '*' ]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Build Docker image
+        run: docker build -t devops-challenge-nextjs:test .
+
+      - name: Setup Kubernetes (kind)
+        id: kind
+        uses: helm/kind-action@v1.9.0
+        with:
+          cluster_name: devops
+          registry: true
+          registry_name: local-registry
+          registry_port: 5000
+
+      - name: Push Docker image to local registry
+        env:
+          LOCAL_REGISTRY: ${{ steps.kind.outputs.LOCAL_REGISTRY }}
+        run: |
+          docker tag devops-challenge-nextjs:test $LOCAL_REGISTRY/devops-challenge-nextjs:latest
+          docker push $LOCAL_REGISTRY/devops-challenge-nextjs:latest
+          docker tag devops-challenge-nextjs:test $LOCAL_REGISTRY/devops-challenge-nextjs:${{ github.sha }}
+          docker push $LOCAL_REGISTRY/devops-challenge-nextjs:${{ github.sha }}
+
+      - name: Deploy to Kubernetes using kustomize
+        env:
+          LOCAL_REGISTRY: ${{ steps.kind.outputs.LOCAL_REGISTRY }}
+        run: |
+          cd k8s
+          kustomize edit set image devops-challenge-nextjs=$LOCAL_REGISTRY/devops-challenge-nextjs:latest
+          kustomize build . | kubectl apply -f -
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          kubectl -n devops-challenge wait --for=condition=ready pod -l app=postgres --timeout=1m
+
+      - name: Wait for Next.js deployment to be ready
+        run: |
+          kubectl -n devops-challenge wait --for=condition=available --timeout=1m deployment/nextjs
+
+      - name: Test application endpoint
+        run: |
+          kubectl -n devops-challenge port-forward svc/nextjs 3000:3000 &
+          sleep 2
+          curl -f http://localhost:3000/ || exit 1
+
+      - name: Scan Docker image
+        uses: anchore/scan-action@v3
+        with:
+          image: "devops-challenge-nextjs:test"
+          fail-build: false
+
+      # - name: Login to Docker Hub
+      #   uses: docker/login-action@v3
+      #   with:
+      #     username: ${{ vars.DOCKERHUB_USERNAME }}
+      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+      #   if: vars.DOCKERHUB_USERNAME != ''
+
+      # - name: Push to Docker Hub
+      #   run: |
+      #     docker tag devops-challenge-nextjs:test ${{ vars.DOCKERHUB_USERNAME }}/devops-challenge-nextjs:latest
+      #     docker tag devops-challenge-nextjs:test ${{ vars.DOCKERHUB_USERNAME }}/devops-challenge-nextjs:${{ github.sha }}
+      #     docker push ${{ vars.DOCKERHUB_USERNAME }}/devops-challenge-nextjs:latest
+      #     docker push ${{ vars.DOCKERHUB_USERNAME }}/devops-challenge-nextjs:${{ github.sha }}
+      #   if: vars.DOCKERHUB_USERNAME != ''
+
+      # - name: Debug failure
+      #   if: failure()
+      #   run: |
+      #     kubectl -n flux-system get all
+      #     kubectl -n flux-system logs deploy/source-controller
+      #     kubectl -n flux-system logs deploy/kustomize-controller
+      #     kubectl -n flux-system logs deploy/helm-controller
+      #     flux get all --all-namespaces
