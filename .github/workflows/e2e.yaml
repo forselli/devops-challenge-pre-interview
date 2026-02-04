@@ -18,7 +18,7 @@ jobs:
 
       - name: Setup Kubernetes (kind)
         id: kind
-        uses: helm/kind-action@v1.9.0
+        uses: helm/kind-action@v1
         with:
           cluster_name: devops
           registry: true
